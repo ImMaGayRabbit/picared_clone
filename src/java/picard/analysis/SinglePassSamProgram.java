@@ -1,292 +1,302 @@
-/*
- * The MIT License
- *
- * Copyright (c) 2015 The Broad Institute
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+    /*
+     * The MIT License
+     *
+     * Copyright (c) 2015 The Broad Institute
+     *
+     * Permission is hereby granted, free of charge, to any person obtaining a copy
+     * of this software and associated documentation files (the "Software"), to deal
+     * in the Software without restriction, including without limitation the rights
+     * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     * copies of the Software, and to permit persons to whom the Software is
+     * furnished to do so, subject to the following conditions:
+     *
+     * The above copyright notice and this permission notice shall be included in
+     * all copies or substantial portions of the Software.
+     *
+     * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+     * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+     * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+     * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+     * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+     * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+     * THE SOFTWARE.
+     */
 
-package picard.analysis;
+    package picard.analysis;
 
-import htsjdk.samtools.SAMFileHeader;
-import htsjdk.samtools.SAMFileHeader.SortOrder;
-import htsjdk.samtools.SAMRecord;
-import htsjdk.samtools.SamReader;
-import htsjdk.samtools.SamReaderFactory;
-import htsjdk.samtools.reference.ReferenceSequence;
-import htsjdk.samtools.reference.ReferenceSequenceFileWalker;
-import htsjdk.samtools.util.CloserUtil;
-import htsjdk.samtools.util.IOUtil;
-import htsjdk.samtools.util.Log;
-import htsjdk.samtools.util.ProgressLogger;
-import htsjdk.samtools.util.SequenceUtil;
-import picard.PicardException;
-import picard.cmdline.CommandLineProgram;
-import picard.cmdline.Option;
-import picard.cmdline.StandardOptionDefinitions;
+    import htsjdk.samtools.SAMFileHeader;
+    import htsjdk.samtools.SAMFileHeader.SortOrder;
+    import htsjdk.samtools.SAMRecord;
+    import htsjdk.samtools.SamReader;
+    import htsjdk.samtools.SamReaderFactory;
+    import htsjdk.samtools.reference.ReferenceSequence;
+    import htsjdk.samtools.reference.ReferenceSequenceFileWalker;
+    import htsjdk.samtools.util.CloserUtil;
+    import htsjdk.samtools.util.IOUtil;
+    import htsjdk.samtools.util.Log;
+    import htsjdk.samtools.util.ProgressLogger;
+    import htsjdk.samtools.util.SequenceUtil;
+    import picard.PicardException;
+    import picard.cmdline.CommandLineProgram;
+    import picard.cmdline.Option;
+    import picard.cmdline.StandardOptionDefinitions;
 
-import java.io.File;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-
-/**
- * Super class that is designed to provide some consistent structure between subclasses that
- * simply iterate once over a coordinate sorted BAM and collect information from the records
- * as the go in order to produce some kind of output.
- *
- * @author Tim Fennell
- */
-public abstract class SinglePassSamProgram extends CommandLineProgram {
-    @Option(shortName = StandardOptionDefinitions.INPUT_SHORT_NAME, doc = "Input SAM or BAM file.")
-    public File INPUT;
-
-    @Option(shortName = "O", doc = "File to write the output to.")
-    public File OUTPUT;
-
-    @Option(doc = "If true (default), then the sort order in the header file will be ignored.",
-            shortName = StandardOptionDefinitions.ASSUME_SORTED_SHORT_NAME)
-    public boolean ASSUME_SORTED = true;
-
-    @Option(doc = "Stop after processing N reads, mainly for debugging.")
-    public long STOP_AFTER = 0;
-
-    private static final Log log = Log.getInstance(SinglePassSamProgram.class);
+    import java.io.File;
+    import java.util.*;
+    import java.util.concurrent.*;
+    import java.util.concurrent.atomic.AtomicBoolean;
+    import java.util.concurrent.locks.Lock;
+    import java.util.concurrent.locks.ReentrantLock;
 
     /**
-     * Final implementation of doWork() that checks and loads the input and optionally reference
-     * sequence files and the runs the sublcass through the setup() acceptRead() and finish() steps.
+     * Super class that is designed to provide some consistent structure between subclasses that
+     * simply iterate once over a coordinate sorted BAM and collect information from the records
+     * as the go in order to produce some kind of output.
+     *
+     * @author Tim Fennell
      */
-    @Override
-    protected final int doWork() {
-        makeItSo(INPUT, REFERENCE_SEQUENCE, ASSUME_SORTED, STOP_AFTER, Arrays.asList(this));
-        return 0;
-    }
+    public abstract class SinglePassSamProgram extends CommandLineProgram {
+        @Option(shortName = StandardOptionDefinitions.INPUT_SHORT_NAME, doc = "Input SAM or BAM file.")
+        public File INPUT;
 
-    public static void makeItSo(final File input,
-                                final File referenceSequence,
-                                final boolean assumeSorted,
-                                final long stopAfter,
-                                final Collection<SinglePassSamProgram> programs) {
+        @Option(shortName = "O", doc = "File to write the output to.")
+        public File OUTPUT;
 
-        // Setup the standard inputs
-        IOUtil.assertFileIsReadable(input);
-        final SamReader in = SamReaderFactory.makeDefault().referenceSequence(referenceSequence).open(input);
+        @Option(doc = "If true (default), then the sort order in the header file will be ignored.",
+                shortName = StandardOptionDefinitions.ASSUME_SORTED_SHORT_NAME)
+        public boolean ASSUME_SORTED = true;
 
-        // Optionally load up the reference sequence and double check sequence dictionaries
-        final ReferenceSequenceFileWalker walker;
-        if (referenceSequence == null) {
-            walker = null;
-        } else {
-            IOUtil.assertFileIsReadable(referenceSequence);
-            walker = new ReferenceSequenceFileWalker(referenceSequence);
+        @Option(doc = "Stop after processing N reads, mainly for debugging.")
+        public long STOP_AFTER = 0;
 
-            if (!in.getFileHeader().getSequenceDictionary().isEmpty()) {
-                SequenceUtil.assertSequenceDictionariesEqual(in.getFileHeader().getSequenceDictionary(),
-                        walker.getSequenceDictionary());
-            }
+        private static final Log log = Log.getInstance(SinglePassSamProgram.class);
+
+        /**
+         * Final implementation of doWork() that checks and loads the input and optionally reference
+         * sequence files and the runs the sublcass through the setup() acceptRead() and finish() steps.
+         */
+        @Override
+        protected final int doWork() {
+            makeItSo(INPUT, REFERENCE_SEQUENCE, ASSUME_SORTED, STOP_AFTER, Arrays.asList(this));
+            return 0;
         }
 
-        // Check on the sort order of the BAM file
-        {
-            final SortOrder sort = in.getFileHeader().getSortOrder();
-            if (sort != SortOrder.coordinate) {
-                if (assumeSorted) {
-                    log.warn("File reports sort order '" + sort + "', assuming it's coordinate sorted anyway.");
-                } else {
-                    throw new PicardException("File " + input.getAbsolutePath() + " should be coordinate sorted but " +
-                            "the header says the sort order is " + sort + ". If you believe the file " +
-                            "to be coordinate sorted you may pass ASSUME_SORTED=true");
+        public static void makeItSo(final File input,
+                                    final File referenceSequence,
+                                    final boolean assumeSorted,
+                                    final long stopAfter,
+                                    final Collection<SinglePassSamProgram> programs) {
+
+            // Setup the standard inputs
+            IOUtil.assertFileIsReadable(input);
+            final SamReader in = SamReaderFactory.makeDefault().referenceSequence(referenceSequence).open(input);
+
+            // Optionally load up the reference sequence and double check sequence dictionaries
+            final ReferenceSequenceFileWalker walker;
+            if (referenceSequence == null) {
+                walker = null;
+            } else {
+                IOUtil.assertFileIsReadable(referenceSequence);
+                walker = new ReferenceSequenceFileWalker(referenceSequence);
+
+                if (!in.getFileHeader().getSequenceDictionary().isEmpty()) {
+                    SequenceUtil.assertSequenceDictionariesEqual(in.getFileHeader().getSequenceDictionary(),
+                            walker.getSequenceDictionary());
                 }
             }
-        }
 
-        // Call the abstract setup method!
-        boolean anyUseNoRefReads = false;
-        for (final SinglePassSamProgram program : programs) {
-            program.setup(in.getFileHeader(), input);
-            anyUseNoRefReads = anyUseNoRefReads || program.usesNoRefReads();
-        }
-        final ProgressLogger progress = new ProgressLogger(log);
-        /*
-        // Original Code:
-        for (final SAMRecord rec : in) {
-            // Setting Reference
-            final ReferenceSequence ref;
-            if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                ref = null;
-            } else {
-                ref = walker.get(rec.getReferenceIndex());
+            // Check on the sort order of the BAM file
+            {
+                final SortOrder sort = in.getFileHeader().getSortOrder();
+                if (sort != SortOrder.coordinate) {
+                    if (assumeSorted) {
+                        log.warn("File reports sort order '" + sort + "', assuming it's coordinate sorted anyway.");
+                    } else {
+                        throw new PicardException("File " + input.getAbsolutePath() + " should be coordinate sorted but " +
+                                "the header says the sort order is " + sort + ". If you believe the file " +
+                                "to be coordinate sorted you may pass ASSUME_SORTED=true");
+                    }
+                }
             }
-            //
+
+            // Call the abstract setup method!
+            boolean anyUseNoRefReads = false;
             for (final SinglePassSamProgram program : programs) {
-                program.acceptRead(rec, ref);
+                program.setup(in.getFileHeader(), input);
+                anyUseNoRefReads = anyUseNoRefReads || program.usesNoRefReads();
             }
+            final ProgressLogger progress = new ProgressLogger(log);
+            /*
+            // Original Code:
+            for (final SAMRecord rec : in) {
+                // Setting Reference
+                final ReferenceSequence ref;
+                if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                    ref = null;
+                } else {
+                    ref = walker.get(rec.getReferenceIndex());
+                }
+                //
+                for (final SinglePassSamProgram program : programs) {
+                    program.acceptRead(rec, ref);
+                }
 
-            progress.record(rec);
+                progress.record(rec);
 
-            // See if we need to terminate early?
-            if (stopAfter > 0 && progress.getCount() >= stopAfter) {
-                break;
+                // See if we need to terminate early?
+                if (stopAfter > 0 && progress.getCount() >= stopAfter) {
+                    break;
+                }
+
+                // And see if we're into the unmapped reads at the end
+                if (!anyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                    break;
+                }
             }
+            */
+            // --Setting up Executors--
+            // Setting half of available processors to do the work
+            final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()/2);
+            // --Variables
+            final AtomicBoolean isStop = new AtomicBoolean(false);
 
-            // And see if we're into the unmapped reads at the end
-            if (!anyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                break;
-            }
-        }
-        */
-        // --Setting up Executors--
-        // Setting half of available processors to do the work
-        final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()/2);
-        // --Variables
-        final AtomicBoolean isStop = new AtomicBoolean(false);
+            // --Constants--
+            final int LIST_CAPACITY = 100;
+            final int QUEUE_CAPACITY = 10;
+            final int SEM_CAPACITY = 10;
 
-        // --Constants--
-        final int LIST_CAPACITY = 100;
-        final int QUEUE_CAPACITY = 10;
-        final int SEM_CAPACITY = 10;
+            // --Setting up some object stuff
+            ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
+            final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingDeque<ArrayList<Object[]>>(QUEUE_CAPACITY);
+            final Semaphore sem = new Semaphore(SEM_CAPACITY);
+    //        final Lock lock = new ReentrantLock(true);
 
-        // --Setting up some object stuff
-        ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
-        final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingDeque<ArrayList<Object[]>>(QUEUE_CAPACITY);
-        final Semaphore sem = new Semaphore(SEM_CAPACITY);
-//        final Lock lock = new ReentrantLock(true);
+            final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
+            executorService.execute(new Runnable() {
+                @Override
+                public void run() {
+                    while (true){
+                        try {
 
-        final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                while (true){
-                    try {
-
-                        final ArrayList<Object[]> pairsChunk = queue.take();
-                        // Poison pill stuff
-                        if (pairsChunk.size() == 0){
-                            return;
-                        }
-                        sem.acquire();
-
-                        executorService.execute(new Runnable() {
-                            @Override
-                            public void run() {
-                                for(Object[] arr : pairsChunk){
-
-                                    SAMRecord rec = (SAMRecord) arr[0];
-                                    ReferenceSequence ref = (ReferenceSequence) arr[1];
-
-                                    for (final SinglePassSamProgram program : programs) {
-                                        program.acceptRead(rec, ref);
-                                    }
-
-                                    progress.record(rec);
-                                    // See if we need to terminate early?
-                                    if (stopAfter > 0 && progress.getCount() >= stopAfter) {
-                                        isStop.set(false);
-                                        return;
-                                    }
-
-                                    // And see if we're into the unmapped reads at the end
-                                    if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                                        isStop.set(false);
-                                        return;
-                                    }
-                                }
-                                sem.release();
+                            final ArrayList<Object[]> pairsChunk = queue.take();
+                            // Poison pill stuff
+                            if (pairsChunk.size() == 0){
+                                return;
                             }
-                        });
-                    } catch (InterruptedException e) {
-                        // Do nothing
+                            sem.acquire();
+
+                            executorService.execute(new Runnable() {
+                                @Override
+                                public void run() {
+                                    for(Object[] arr : pairsChunk){
+
+                                        SAMRecord rec = (SAMRecord) arr[0];
+                                        ReferenceSequence ref = (ReferenceSequence) arr[1];
+
+                                        // From time to time it give NPE int Tree.RotatleLeft or something like that
+                                        // It can be avoided by synchronizing acceptRead, but it will significantly reduce
+                                        // speed of calculations making almost all calculations in single-thread-speed.
+                                        // Gotta fix it somehow
+                                        for (final SinglePassSamProgram program : programs) {
+                                            program.acceptRead(rec, ref);
+                                        }
+
+                                        progress.record(rec);
+                                        // See if we need to terminate early?
+                                        if (stopAfter > 0 && progress.getCount() >= stopAfter) {
+                                            isStop.set(false);
+                                            return;
+                                        }
+
+                                        // And see if we're into the unmapped reads at the end
+                                        if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                                            isStop.set(false);
+                                            return;
+                                        }
+                                    }
+                                    sem.release();
+                                }
+                            });
+                        } catch (InterruptedException e) {
+                            // Do nothing
+                        }
+
                     }
 
                 }
+            });
 
+            for (final SAMRecord rec : in) {
+                final ReferenceSequence ref;
+                if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                    ref = null;
+                } else {
+                    ref = walker.get(rec.getReferenceIndex());
+                }
+                // Checking if we need to stop
+                if (isStop.get()){
+                    // Shutting executorService
+                    executorService.shutdownNow();
+                    break;
+                }
+                pairs.add(new Object[]{rec, ref});
+                if (pairs.size() < QUEUE_CAPACITY){
+                    continue;
+                }
+                try {
+                    queue.put(pairs);
+                } catch (InterruptedException e) {
+                    // Do nothing
+                }
+                pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
             }
-        });
+            // This is not really good shit.
+            // Have to redo this someday
+            // when main thread is waiting for shutdown it won't bother
+            // for a signal to stop all calculations
+            if (!isStop.get()) {
+                // Checking if array still has some pairs
+                if (pairs.size() != 0) {
+                    try {
+                        queue.put(pairs);
+                    } catch (InterruptedException e) {
+                        // DO nothing
+                    }
+                }
 
-        for (final SAMRecord rec : in) {
-            final ReferenceSequence ref;
-            if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                ref = null;
-            } else {
-                ref = walker.get(rec.getReferenceIndex());
+                // Poison pill stuff
+                pairs = new ArrayList<Object[]>();
+                try {
+                    queue.put(pairs);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+
+                // Now shutting down Executor service
+                executorService.shutdown();
             }
-            // Checking if we need to stop
-            if (isStop.get()){
-                // Shutting executorService
-                executorService.shutdownNow();
+            // Just closing everything that is Closable
+            CloserUtil.close(in);
+            // There we can collect and compute final metrics (and write then in O-file? mb)
+            for (final SinglePassSamProgram program : programs) {
+                program.finish();
             }
-            pairs.add(new Object[]{rec, ref});
-            if (pairs.size() < QUEUE_CAPACITY){
-                continue;
-            }
-            try {
-                queue.put(pairs);
-            } catch (InterruptedException e) {
-                // Do nothing
-            }
-            pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
         }
-        // Checking if array still has some pairs
-        if (pairs.size()!=0){
-            try {
-                queue.put(pairs);
-            } catch (InterruptedException e) {
-                // DO nothing
-            }
-        }
 
-        // Poison pill stuff
-        pairs = new ArrayList<Object[]>();
-        try {
-            queue.put(pairs);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
+        /** Can be overriden and set to false if the section of unmapped reads at the end of the file isn't needed. */
+        protected boolean usesNoRefReads() { return true; }
 
-        // Now shutting down Executor service
-        executorService.shutdown();
+        /** Should be implemented by subclasses to do one-time initialization work. */
+        protected abstract void setup(final SAMFileHeader header, final File samFile);
 
-        // Just closing everything that is Closable
-        CloserUtil.close(in);
-        // There we can collect and compute final metrics (and write then in O-file? mb)
-        for (final SinglePassSamProgram program : programs) {
-            program.finish();
-        }
+        /**
+         * Should be implemented by subclasses to accept SAMRecords one at a time.
+         * If the read has a reference sequence and a reference sequence file was supplied to the program
+         * it will be passed as 'ref'. Otherwise 'ref' may be null.
+         */
+        protected abstract void acceptRead(final SAMRecord rec, final ReferenceSequence ref);
+
+        /** Should be implemented by subclasses to do one-time finalization work. */
+        protected abstract void finish();
+
     }
-
-    /** Can be overriden and set to false if the section of unmapped reads at the end of the file isn't needed. */
-    protected boolean usesNoRefReads() { return true; }
-
-    /** Should be implemented by subclasses to do one-time initialization work. */
-    protected abstract void setup(final SAMFileHeader header, final File samFile);
-
-    /**
-     * Should be implemented by subclasses to accept SAMRecords one at a time.
-     * If the read has a reference sequence and a reference sequence file was supplied to the program
-     * it will be passed as 'ref'. Otherwise 'ref' may be null.
-     */
-    protected abstract void acceptRead(final SAMRecord rec, final ReferenceSequence ref);
-
-    /** Should be implemented by subclasses to do one-time finalization work. */
-    protected abstract void finish();
-
-}
