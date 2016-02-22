@@ -42,8 +42,11 @@ import picard.cmdline.Option;
 import picard.cmdline.StandardOptionDefinitions;
 
 import java.io.File;
-import java.util.Arrays;
-import java.util.Collection;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Super class that is designed to provide some consistent structure between subclasses that
@@ -122,18 +125,18 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
             program.setup(in.getFileHeader(), input);
             anyUseNoRefReads = anyUseNoRefReads || program.usesNoRefReads();
         }
-
-
         final ProgressLogger progress = new ProgressLogger(log);
-
+        /*
+        // Original Code:
         for (final SAMRecord rec : in) {
+            // Setting Reference
             final ReferenceSequence ref;
             if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
                 ref = null;
             } else {
                 ref = walker.get(rec.getReferenceIndex());
             }
-
+            //
             for (final SinglePassSamProgram program : programs) {
                 program.acceptRead(rec, ref);
             }
@@ -150,9 +153,121 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
                 break;
             }
         }
+        */
+        // --Setting up Executors--
+        // Setting half of available processors to do the work
+        final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()/2);
+        // --Variables
+        final AtomicBoolean isStop = new AtomicBoolean(false);
 
+        // --Constants--
+        final int LIST_CAPACITY = 100;
+        final int QUEUE_CAPACITY = 10;
+        final int SEM_CAPACITY = 10;
+
+        // --Setting up some object stuff
+        ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
+        final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingDeque<ArrayList<Object[]>>(QUEUE_CAPACITY);
+        final Semaphore sem = new Semaphore(SEM_CAPACITY);
+//        final Lock lock = new ReentrantLock(true);
+
+        final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
+        executorService.execute(new Runnable() {
+            @Override
+            public void run() {
+                while (true){
+                    try {
+
+                        final ArrayList<Object[]> pairsChunk = queue.take();
+                        // Poison pill stuff
+                        if (pairsChunk.size() == 0){
+                            return;
+                        }
+                        sem.acquire();
+
+                        executorService.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                for(Object[] arr : pairsChunk){
+
+                                    SAMRecord rec = (SAMRecord) arr[0];
+                                    ReferenceSequence ref = (ReferenceSequence) arr[1];
+
+                                    for (final SinglePassSamProgram program : programs) {
+                                        program.acceptRead(rec, ref);
+                                    }
+
+                                    progress.record(rec);
+                                    // See if we need to terminate early?
+                                    if (stopAfter > 0 && progress.getCount() >= stopAfter) {
+                                        isStop.set(false);
+                                        return;
+                                    }
+
+                                    // And see if we're into the unmapped reads at the end
+                                    if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                                        isStop.set(false);
+                                        return;
+                                    }
+                                }
+                                sem.release();
+                            }
+                        });
+                    } catch (InterruptedException e) {
+                        // Do nothing
+                    }
+
+                }
+
+            }
+        });
+
+        for (final SAMRecord rec : in) {
+            final ReferenceSequence ref;
+            if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                ref = null;
+            } else {
+                ref = walker.get(rec.getReferenceIndex());
+            }
+            // Checking if we need to stop
+            if (isStop.get()){
+                // Shutting executorService
+                executorService.shutdownNow();
+            }
+            pairs.add(new Object[]{rec, ref});
+            if (pairs.size() < QUEUE_CAPACITY){
+                continue;
+            }
+            try {
+                queue.put(pairs);
+            } catch (InterruptedException e) {
+                // Do nothing
+            }
+            pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
+        }
+        // Checking if array still has some pairs
+        if (pairs.size()!=0){
+            try {
+                queue.put(pairs);
+            } catch (InterruptedException e) {
+                // DO nothing
+            }
+        }
+
+        // Poison pill stuff
+        pairs = new ArrayList<Object[]>();
+        try {
+            queue.put(pairs);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        // Now shutting down Executor service
+        executorService.shutdown();
+
+        // Just closing everything that is Closable
         CloserUtil.close(in);
-
+        // There we can collect and compute final metrics (and write then in O-file? mb)
         for (final SinglePassSamProgram program : programs) {
             program.finish();
         }
