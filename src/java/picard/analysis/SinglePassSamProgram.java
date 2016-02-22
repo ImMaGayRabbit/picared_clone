@@ -167,7 +167,7 @@
 
             // --Setting up some object stuff
             ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
-            final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingDeque<ArrayList<Object[]>>(QUEUE_CAPACITY);
+            final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingQueue<ArrayList<Object[]>>(QUEUE_CAPACITY);
             final Semaphore sem = new Semaphore(SEM_CAPACITY);
     //        final Lock lock = new ReentrantLock(true);
 
