@@ -161,7 +161,7 @@
             final AtomicBoolean isStop = new AtomicBoolean(false);
 
             // --Constants--
-            final int LIST_CAPACITY = 100;
+            final int LIST_CAPACITY = 10000;
             final int QUEUE_CAPACITY = 10;
             final int SEM_CAPACITY = 10;
 
@@ -169,7 +169,6 @@
             ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
             final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingQueue<ArrayList<Object[]>>(QUEUE_CAPACITY);
             final Semaphore sem = new Semaphore(SEM_CAPACITY);
-    //        final Lock lock = new ReentrantLock(true);
 
             final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
             executorService.execute(new Runnable() {
@@ -193,10 +192,6 @@
                                         SAMRecord rec = (SAMRecord) arr[0];
                                         ReferenceSequence ref = (ReferenceSequence) arr[1];
 
-                                        // From time to time it give NPE int Tree.RotatleLeft or something like that
-                                        // It can be avoided by synchronizing acceptRead, but it will significantly reduce
-                                        // speed of calculations making almost all calculations in single-thread-speed.
-                                        // Gotta fix it somehow
                                         for (final SinglePassSamProgram program : programs) {
                                             program.acceptRead(rec, ref);
                                         }
@@ -225,7 +220,8 @@
 
                 }
             });
-
+            // Sometimes there are rare error, if exception is thrown and catched when iterating records
+            // In that case ES isn't shut down, program won't exit. And that's kinda sad T__T
             for (final SAMRecord rec : in) {
                 final ReferenceSequence ref;
                 if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
