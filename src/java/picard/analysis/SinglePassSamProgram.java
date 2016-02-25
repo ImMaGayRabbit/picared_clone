@@ -156,19 +156,28 @@
             */
             // --Setting up Executors--
             // Setting half of available processors to do the work
-            final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()/2);
+            // Maybe there is an optimal value for threads?
+            // But we need at least 2 threads to do the job
+            final ExecutorService executorService =
+                    Executors.newFixedThreadPool(
+                            Runtime.getRuntime().availableProcessors() < 4 ?
+                                    2 :
+                                    Runtime.getRuntime().availableProcessors()/2
+                    );
             // --Variables
             final AtomicBoolean isStop = new AtomicBoolean(false);
 
             // --Constants--
+            // Maybe there is some kind of algorithm to get ultimate list capacity like freeMemory/sizeOfChunk?
             final int LIST_CAPACITY = 10000;
             final int QUEUE_CAPACITY = 10;
-            final int SEM_CAPACITY = 10;
+//            final int SEM_CAPACITY = 10;
 
             // --Setting up some object stuff
             ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
             final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingQueue<ArrayList<Object[]>>(QUEUE_CAPACITY);
-            final Semaphore sem = new Semaphore(SEM_CAPACITY);
+            // No need for semaphore as queue restricting number of tasks running simultaneously
+//            final Semaphore sem = new Semaphore(SEM_CAPACITY);
 
             final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
             executorService.execute(new Runnable() {
@@ -178,19 +187,19 @@
                         try {
 
                             final ArrayList<Object[]> pairsChunk = queue.take();
-                            // Poison pill stuff
+                            // Poison pill
                             if (pairsChunk.size() == 0){
                                 return;
                             }
-                            sem.acquire();
+//                            sem.acquire();
 
                             executorService.execute(new Runnable() {
                                 @Override
                                 public void run() {
-                                    for(Object[] arr : pairsChunk){
+                                    for(final Object[] arr : pairsChunk){
 
-                                        SAMRecord rec = (SAMRecord) arr[0];
-                                        ReferenceSequence ref = (ReferenceSequence) arr[1];
+                                        final SAMRecord rec = (SAMRecord) arr[0];
+                                        final ReferenceSequence ref = (ReferenceSequence) arr[1];
 
                                         for (final SinglePassSamProgram program : programs) {
                                             program.acceptRead(rec, ref);
@@ -209,7 +218,7 @@
                                             return;
                                         }
                                     }
-                                    sem.release();
+//                                    sem.release();
                                 }
                             });
                         } catch (InterruptedException e) {
@@ -246,10 +255,11 @@
                 }
                 pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
             }
-            // This is not really good shit.
+            // This is not really good solution.
             // Have to redo this someday
             // when main thread is waiting for shutdown it won't bother
             // for a signal to stop all calculations
+            // Maybe make some kind of Listener? Gotta think about it.
             if (!isStop.get()) {
                 // Checking if array still has some pairs
                 if (pairs.size() != 0) {
