@@ -157,27 +157,27 @@
             // --Setting up Executors--
             // Setting half of available processors to do the work
             // Maybe there is an optimal value for threads?
+            // Tried to use that value for sem_capacity (minus one), but didn't get any increase
             // But we need at least 2 threads to do the job
+            final int threadCount = Runtime.getRuntime().availableProcessors() < 4 ?
+                    2 :
+                    Runtime.getRuntime().availableProcessors()/2;
             final ExecutorService executorService =
-                    Executors.newFixedThreadPool(
-                            Runtime.getRuntime().availableProcessors() < 4 ?
-                                    2 :
-                                    Runtime.getRuntime().availableProcessors()/2
-                    );
-            // --Variables
-            final AtomicBoolean isStop = new AtomicBoolean(false);
+                    Executors.newFixedThreadPool(threadCount);
 
             // --Constants--
             // Maybe there is some kind of algorithm to get ultimate list capacity like freeMemory/sizeOfChunk?
-            final int LIST_CAPACITY = 10000;
+            final AtomicBoolean isStop = new AtomicBoolean(false); // Object is mutable!
+            // making list_capacity in 100, 1000, 10000 do not make program faster/slower (at least didn't see difference)
+            final int LIST_CAPACITY = 1000;
             final int QUEUE_CAPACITY = 10;
-//            final int SEM_CAPACITY = 10;
+            final int SEM_CAPACITY = 10;
 
             // --Setting up some object stuff
             ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
             final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingQueue<ArrayList<Object[]>>(QUEUE_CAPACITY);
-            // No need for semaphore as queue restricting number of tasks running simultaneously
-//            final Semaphore sem = new Semaphore(SEM_CAPACITY);
+            // Semaphore controls number of tasks, running in executor service (in it's threads)
+            final Semaphore sem = new Semaphore(SEM_CAPACITY);
 
             final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
             executorService.execute(new Runnable() {
@@ -191,7 +191,7 @@
                             if (pairsChunk.size() == 0){
                                 return;
                             }
-//                            sem.acquire();
+                            sem.acquire();
 
                             executorService.execute(new Runnable() {
                                 @Override
@@ -218,7 +218,7 @@
                                             return;
                                         }
                                     }
-//                                    sem.release();
+                                    sem.release();
                                 }
                             });
                         } catch (InterruptedException e) {
