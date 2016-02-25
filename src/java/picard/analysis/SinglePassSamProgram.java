@@ -199,13 +199,13 @@
                                         progress.record(rec);
                                         // See if we need to terminate early?
                                         if (stopAfter > 0 && progress.getCount() >= stopAfter) {
-                                            isStop.set(false);
+                                            isStop.set(true);
                                             return;
                                         }
 
                                         // And see if we're into the unmapped reads at the end
                                         if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                                            isStop.set(false);
+                                            isStop.set(true);
                                             return;
                                         }
                                     }
