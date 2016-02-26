@@ -41,7 +41,12 @@
     import picard.cmdline.Option;
     import picard.cmdline.StandardOptionDefinitions;
 
+    import javax.swing.*;
+    import java.awt.*;
     import java.io.File;
+    import java.io.IOException;
+    import java.net.URI;
+    import java.net.URISyntaxException;
     import java.util.*;
     import java.util.concurrent.*;
     import java.util.concurrent.atomic.AtomicBoolean;
@@ -196,29 +201,32 @@
                             executorService.execute(new Runnable() {
                                 @Override
                                 public void run() {
-                                    for(final Object[] arr : pairsChunk){
+                                    try {
+                                        for (final Object[] arr : pairsChunk) {
 
-                                        final SAMRecord rec = (SAMRecord) arr[0];
-                                        final ReferenceSequence ref = (ReferenceSequence) arr[1];
+                                            final SAMRecord rec = (SAMRecord) arr[0];
+                                            final ReferenceSequence ref = (ReferenceSequence) arr[1];
 
-                                        for (final SinglePassSamProgram program : programs) {
-                                            program.acceptRead(rec, ref);
+                                            for (final SinglePassSamProgram program : programs) {
+                                                program.acceptRead(rec, ref);
+                                            }
+
+                                            progress.record(rec);
+                                            // See if we need to terminate early?
+                                            if (stopAfter > 0 && progress.getCount() >= stopAfter) {
+                                                isStop.set(true);
+                                                return;
+                                            }
+
+                                            // And see if we're into the unmapped reads at the end
+                                            if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                                                isStop.set(true);
+                                                return;
+                                            }
                                         }
-
-                                        progress.record(rec);
-                                        // See if we need to terminate early?
-                                        if (stopAfter > 0 && progress.getCount() >= stopAfter) {
-                                            isStop.set(true);
-                                            return;
-                                        }
-
-                                        // And see if we're into the unmapped reads at the end
-                                        if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                                            isStop.set(true);
-                                            return;
-                                        }
+                                    } finally {
+                                        sem.release();
                                     }
-                                    sem.release();
                                 }
                             });
                         } catch (InterruptedException e) {
@@ -231,55 +239,60 @@
             });
             // Sometimes there are rare error, if exception is thrown and catched when iterating records
             // In that case ES isn't shut down, program won't exit. And that's kinda sad T__T
-            for (final SAMRecord rec : in) {
-                final ReferenceSequence ref;
-                if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                    ref = null;
-                } else {
-                    ref = walker.get(rec.getReferenceIndex());
+            try {
+                Thread.sleep(5000);
+                for (final SAMRecord rec : in) {
+                    final ReferenceSequence ref;
+                    if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                        ref = null;
+                    } else {
+                        ref = walker.get(rec.getReferenceIndex());
+                    }
+                    // Checking if we need to stop
+                    if (isStop.get()) {
+                        // Shutting executorService
+                        executorService.shutdownNow();
+                        break;
+                    }
+                    pairs.add(new Object[]{rec, ref});
+                    if (pairs.size() < QUEUE_CAPACITY) {
+                        continue;
+                    }
+                    try {
+                        queue.put(pairs);
+                    } catch (InterruptedException e) {
+                        // Do nothing
+                    }
+                    pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
                 }
-                // Checking if we need to stop
-                if (isStop.get()){
-                    // Shutting executorService
-                    executorService.shutdownNow();
-                    break;
-                }
-                pairs.add(new Object[]{rec, ref});
-                if (pairs.size() < QUEUE_CAPACITY){
-                    continue;
-                }
-                try {
-                    queue.put(pairs);
-                } catch (InterruptedException e) {
-                    // Do nothing
-                }
-                pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
-            }
-            // This is not really good solution.
-            // Have to redo this someday
-            // when main thread is waiting for shutdown it won't bother
-            // for a signal to stop all calculations
-            // Maybe make some kind of Listener? Gotta think about it.
-            if (!isStop.get()) {
-                // Checking if array still has some pairs
-                if (pairs.size() != 0) {
+                // This is not really good solution.
+                // Have to redo this someday
+                // when main thread is waiting for shutdown it won't bother
+                // for a signal to stop all calculations
+                // Maybe make some kind of Listener? Gotta think about it.
+                if (!isStop.get()) {
+                    // Checking if array still has some pairs
+                    if (pairs.size() != 0) {
+                        try {
+                            queue.put(pairs);
+                        } catch (InterruptedException e) {
+                            // DO nothing
+                        }
+                    }
+
+                    // Poison pill stuff
+                    pairs = new ArrayList<Object[]>();
                     try {
                         queue.put(pairs);
                     } catch (InterruptedException e) {
                         // DO nothing
                     }
-                }
 
-                // Poison pill stuff
-                pairs = new ArrayList<Object[]>();
-                try {
-                    queue.put(pairs);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    // Now shutting down Executor service
+                    executorService.shutdown();
                 }
-
-                // Now shutting down Executor service
-                executorService.shutdown();
+            } catch (Exception e) {
+                e.printStackTrace();
             }
             // Just closing everything that is Closable
             CloserUtil.close(in);
