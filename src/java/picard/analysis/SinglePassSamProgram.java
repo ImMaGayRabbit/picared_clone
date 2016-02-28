@@ -27,6 +27,7 @@
     import htsjdk.samtools.SAMFileHeader;
     import htsjdk.samtools.SAMFileHeader.SortOrder;
     import htsjdk.samtools.SAMRecord;
+    import htsjdk.samtools.SAMRecordIterator;
     import htsjdk.samtools.SamReader;
     import htsjdk.samtools.SamReaderFactory;
     import htsjdk.samtools.reference.ReferenceSequence;
@@ -183,65 +184,14 @@
             final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingQueue<ArrayList<Object[]>>(QUEUE_CAPACITY);
             // Semaphore controls number of tasks, running in executor service (in it's threads)
             final Semaphore sem = new Semaphore(SEM_CAPACITY);
-
             final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
-            executorService.execute(new Runnable() {
-                @Override
-                public void run() {
-                    while (true){
-                        try {
 
-                            final ArrayList<Object[]> pairsChunk = queue.take();
-                            // Poison pill
-                            if (pairsChunk.size() == 0){
-                                return;
-                            }
-                            sem.acquire();
-
-                            executorService.execute(new Runnable() {
-                                @Override
-                                public void run() {
-                                    try {
-                                        for (final Object[] arr : pairsChunk) {
-
-                                            final SAMRecord rec = (SAMRecord) arr[0];
-                                            final ReferenceSequence ref = (ReferenceSequence) arr[1];
-
-                                            for (final SinglePassSamProgram program : programs) {
-                                                program.acceptRead(rec, ref);
-                                            }
-
-                                            progress.record(rec);
-                                            // See if we need to terminate early?
-                                            if (stopAfter > 0 && progress.getCount() >= stopAfter) {
-                                                isStop.set(true);
-                                                return;
-                                            }
-
-                                            // And see if we're into the unmapped reads at the end
-                                            if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
-                                                isStop.set(true);
-                                                return;
-                                            }
-                                        }
-                                    } finally {
-                                        sem.release();
-                                    }
-                                }
-                            });
-                        } catch (InterruptedException e) {
-                            // Do nothing
-                        }
-
-                    }
-
-                }
-            });
             // Sometimes there are rare error, if exception is thrown and catched when iterating records
             // In that case ES isn't shut down, program won't exit. And that's kinda sad T__T
             try {
-                Thread.sleep(5000);
-                for (final SAMRecord rec : in) {
+                // Not for-each cycle to avoid doubling the code of execution task
+                for (final SAMRecordIterator it = in.iterator(); it.hasNext(); ) {
+                    final SAMRecord rec = it.next();
                     final ReferenceSequence ref;
                     if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
                         ref = null;
@@ -255,51 +205,69 @@
                         break;
                     }
                     pairs.add(new Object[]{rec, ref});
-                    if (pairs.size() < QUEUE_CAPACITY) {
+                    // if this record is last record, that send array pairs to executor anyway
+                    // (So code won't be equal in different blocks)
+                    if (pairs.size() < QUEUE_CAPACITY && it.hasNext()) {
                         continue;
                     }
-                    try {
-                        queue.put(pairs);
-                    } catch (InterruptedException e) {
-                        // Do nothing
-                    }
+
+                    final ArrayList<Object[]> pairsChunk = pairs;
+                    sem.acquire();
+                    executorService.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                for (final Object[] arr : pairsChunk) {
+
+                                    final SAMRecord rec = (SAMRecord) arr[0];
+                                    final ReferenceSequence ref = (ReferenceSequence) arr[1];
+
+                                    for (final SinglePassSamProgram program : programs) {
+                                        program.acceptRead(rec, ref);
+                                    }
+
+                                    progress.record(rec);
+                                    // See if we need to terminate early?
+                                    if (stopAfter > 0 && progress.getCount() >= stopAfter) {
+                                        isStop.set(true);
+                                        return;
+                                    }
+
+                                    // And see if we're into the unmapped reads at the end
+                                    if (!finalAnyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
+                                        isStop.set(true);
+                                        return;
+                                    }
+                                }
+                            } finally {
+                                sem.release();
+                            }
+                        }
+                    });
                     pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
                 }
-                // This is not really good solution.
-                // Have to redo this someday
-                // when main thread is waiting for shutdown it won't bother
-                // for a signal to stop all calculations
-                // Maybe make some kind of Listener? Gotta think about it.
-                if (!isStop.get()) {
-                    // Checking if array still has some pairs
-                    if (pairs.size() != 0) {
-                        try {
-                            queue.put(pairs);
-                        } catch (InterruptedException e) {
-                            // DO nothing
-                        }
-                    }
-
-                    // Poison pill stuff
-                    pairs = new ArrayList<Object[]>();
-                    try {
-                        queue.put(pairs);
-                    } catch (InterruptedException e) {
-                        // DO nothing
-                    }
-
-                    // Now shutting down Executor service
+            } catch (Exception e) {
+                // Do nothing
+            } finally {
+                // If ES isn't terminated already, then shut down it
+                if (!executorService.isShutdown()){
                     executorService.shutdown();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+                // Waiting till calculations in ES completed
+                try {
+                    executorService.awaitTermination(1, TimeUnit.DAYS);
+                } catch (InterruptedException e) {
+                    // Do nothing
+                }
+
+                // Just closing everything that is Closable
+                CloserUtil.close(in);
+                // There we can collect and compute final metrics (and write then in O-file? mb)
+                for (final SinglePassSamProgram program : programs) {
+                    program.finish();
+                }
             }
-            // Just closing everything that is Closable
-            CloserUtil.close(in);
-            // There we can collect and compute final metrics (and write then in O-file? mb)
-            for (final SinglePassSamProgram program : programs) {
-                program.finish();
-            }
+
         }
 
         /** Can be overriden and set to false if the section of unmapped reads at the end of the file isn't needed. */
