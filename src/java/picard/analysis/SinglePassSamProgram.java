@@ -181,7 +181,6 @@
 
             // --Setting up some object stuff
             ArrayList<Object[]> pairs = new ArrayList<Object[]>(LIST_CAPACITY);
-            final BlockingQueue<ArrayList<Object[]>> queue = new LinkedBlockingQueue<ArrayList<Object[]>>(QUEUE_CAPACITY);
             // Semaphore controls number of tasks, running in executor service (in it's threads)
             final Semaphore sem = new Semaphore(SEM_CAPACITY);
             final boolean finalAnyUseNoRefReads = anyUseNoRefReads;
@@ -205,7 +204,8 @@
                         break;
                     }
                     pairs.add(new Object[]{rec, ref});
-                    // if this record is last record, that send array pairs to executor anyway
+
+                    // if this record is last record, that send pairs to executor anyway
                     // (So code won't be equal in different blocks)
                     if (pairs.size() < QUEUE_CAPACITY && it.hasNext()) {
                         continue;
@@ -248,6 +248,7 @@
                 }
             } catch (Exception e) {
                 // Do nothing
+                e.printStackTrace();
             } finally {
                 // If ES isn't terminated already, then shut down it
                 if (!executorService.isShutdown()){
@@ -258,6 +259,7 @@
                     executorService.awaitTermination(1, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
                     // Do nothing
+                    e.printStackTrace();
                 }
 
                 // Just closing everything that is Closable
