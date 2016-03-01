@@ -35,6 +35,7 @@ import htsjdk.samtools.metrics.MetricsFile;
 import htsjdk.samtools.reference.ReferenceSequence;
 import htsjdk.samtools.util.CoordMath;
 import htsjdk.samtools.util.Histogram;
+import htsjdk.samtools.util.Log;
 import htsjdk.samtools.util.SequenceUtil;
 import htsjdk.samtools.util.StringUtil;
 import htsjdk.samtools.SamPairUtil.PairOrientation;
@@ -87,6 +88,8 @@ public class AlignmentSummaryMetricsCollector extends SAMRecordAndReferenceMulti
     public void acceptRecord(final SAMRecord rec, final ReferenceSequence ref) {
         if (!rec.isSecondaryOrSupplementary()) {
             super.acceptRecord(rec, ref);
+//            Log.getInstance(this.getClass()).info(super.getClass().getName());
+
         }
     }
 
@@ -226,7 +229,7 @@ public class AlignmentSummaryMetricsCollector extends SAMRecordAndReferenceMulti
                 }
             }
 
-            private void collectReadData(final SAMRecord record) {
+            private synchronized void collectReadData(final SAMRecord record) {
                 // NB: for read count metrics, do not include supplementary records, but for base count metrics, do include supplementary records.
                 if (record.getSupplementaryAlignmentFlag()) return;
 
@@ -274,7 +277,7 @@ public class AlignmentSummaryMetricsCollector extends SAMRecordAndReferenceMulti
                 }
             }
 
-            private void collectQualityData(final SAMRecord record, final ReferenceSequence reference) {
+            private synchronized void collectQualityData(final SAMRecord record, final ReferenceSequence reference) {
                 // NB: for read count metrics, do not include supplementary records, but for base count metrics, do include supplementary records.
 
                 // If the read isn't an aligned PF read then look at the read for no-calls

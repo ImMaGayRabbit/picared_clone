@@ -170,13 +170,17 @@
                     Runtime.getRuntime().availableProcessors()/2;
             final ExecutorService executorService =
                     Executors.newFixedThreadPool(threadCount);
-
+            // TESTING SHIT DELETE LATER
+//            for(SinglePassSamProgram program : programs){
+//                log.info(program.getClass().getName());
+//            }
+            // END OF TESTING SHIT DELETE!
             // --Constants--
             // Maybe there is some kind of algorithm to get ultimate list capacity like freeMemory/sizeOfChunk?
             final AtomicBoolean isStop = new AtomicBoolean(false); // Object is mutable!
             // making list_capacity in 100, 1000, 10000 do not make program faster/slower (at least didn't see difference)
             final int LIST_CAPACITY = 1000;
-            final int QUEUE_CAPACITY = 10;
+            // final int QUEUE_CAPACITY = 10;
             final int SEM_CAPACITY = 10;
 
             // --Setting up some object stuff
@@ -207,12 +211,12 @@
 
                     // if this record is last record, that send pairs to executor anyway
                     // (So code won't be equal in different blocks)
-                    if (pairs.size() < QUEUE_CAPACITY && it.hasNext()) {
+                    if (pairs.size() < LIST_CAPACITY && it.hasNext()) {
                         continue;
                     }
-
-                    final ArrayList<Object[]> pairsChunk = pairs;
                     sem.acquire();
+                    final ArrayList<Object[]> pairsChunk = pairs;
+
                     executorService.execute(new Runnable() {
                         @Override
                         public void run() {
@@ -227,6 +231,7 @@
                                     }
 
                                     progress.record(rec);
+
                                     // See if we need to terminate early?
                                     if (stopAfter > 0 && progress.getCount() >= stopAfter) {
                                         isStop.set(true);
@@ -244,7 +249,7 @@
                             }
                         }
                     });
-                    pairs = new ArrayList<Object[]>(QUEUE_CAPACITY);
+                    pairs = new ArrayList<Object[]>(LIST_CAPACITY);
                 }
             } catch (Exception e) {
                 // Do nothing
@@ -261,7 +266,9 @@
                     // Do nothing
                     e.printStackTrace();
                 }
-
+                // Count of records (to the logs) to compare stuff
+                log.info(progress.getCount());
+//                progress.getCount();
                 // Just closing everything that is Closable
                 CloserUtil.close(in);
                 // There we can collect and compute final metrics (and write then in O-file? mb)

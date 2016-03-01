@@ -29,6 +29,7 @@ import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.metrics.MetricBase;
 import htsjdk.samtools.metrics.MetricsFile;
 import htsjdk.samtools.reference.ReferenceSequence;
+import htsjdk.samtools.util.Log;
 import picard.PicardException;
 import picard.analysis.MetricAccumulationLevel;
 
@@ -312,6 +313,7 @@ public abstract class MultiLevelCollector<METRIC_TYPE extends MetricBase, Histog
         final ARGTYPE arg = makeArg(record, refSeq);
 
         for(final Distributor collector : outputOrderedDistributors) {
+//            Log.getInstance(this.getClass()).info(collector.getClass().getName());
             collector.acceptRecord(arg, record.getReadGroup());
         }
     }

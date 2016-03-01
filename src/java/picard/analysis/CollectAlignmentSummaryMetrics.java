@@ -140,6 +140,7 @@ public class CollectAlignmentSummaryMetrics extends SinglePassSamProgram {
     }
 
     @Override protected void acceptRead(final SAMRecord rec, final ReferenceSequence ref) {
+//        log.info(collector.getClass().getName());
         collector.acceptRecord(rec, ref);
     }
 
